@@ -1,0 +1,218 @@
+name: Track Project Changes
+
+permissions:
+  contents: write
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  track-changes:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Track Project Changes
+        uses: actions/github-script@v7
+        env:
+          PROJECT_NUMBER: 2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const owner = 'jhomercontreras-maker';
+            const repo = 'FdEE_Equipo_X';
+            const projectNumber = parseInt(process.env.PROJECT_NUMBER);
+
+            try {
+              console.log(`🔍 Buscando Project #${projectNumber} (USER)...\n`);
+
+              // ✅ QUERY COMPLETA CON FIELD VALUES (START DATE + STATUS)
+              const query = `
+                query {
+                  user(login: "${owner}") {
+                    projectV2(number: ${projectNumber}) {
+                      id
+                      title
+                      items(first: 100) {
+                        nodes {
+                          id
+                          content {
+                            ... on Issue {
+                              number
+                              title
+                              state
+                            }
+                          }
+                          fieldValues(first: 20) {
+                            nodes {
+                              ... on ProjectV2ItemFieldDateValue {
+                                date
+                                field {
+                                  ... on ProjectV2FieldCommon {
+                                    name
+                                  }
+                                }
+                              }
+                              ... on ProjectV2ItemFieldSingleSelectValue {
+                                name
+                                field {
+                                  ... on ProjectV2FieldCommon {
+                                    name
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const data = await github.graphql(query);
+              const project = data.user.projectV2;
+
+              if (!project) {
+                throw new Error(`❌ No se encontró el Project #${projectNumber}`);
+              }
+
+              console.log(`✅ Proyecto: ${project.title}`);
+              console.log(`📊 Items: ${project.items.nodes.length}\n`);
+
+              // ===============================
+              // EXTRAER DATOS DEL PROJECT
+              // ===============================
+              let projectItemsData = [];
+
+              for (const item of project.items.nodes) {
+                if (!item.content) continue;
+
+                let startDate = 'Sin fecha';
+                let status = 'Sin estado';
+
+                item.fieldValues.nodes.forEach(fieldValue => {
+                  const fieldName = fieldValue.field?.name;
+
+                  if (fieldName === 'Start date') {
+                    startDate = fieldValue.date || 'Sin fecha';
+                  }
+
+                  if (fieldName === 'Status') {
+                    status = fieldValue.name || 'Sin estado';
+                  }
+                });
+
+                projectItemsData.push({
+                  number: item.content.number,
+                  title: item.content.title,
+                  state: item.content.state,
+                  startDate,
+                  status
+                });
+              }
+
+              // ===============================
+              // HISTORIAL DE ISSUES
+              // ===============================
+              const issues = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: 'all',
+                per_page: 100
+              });
+
+              let allChanges = [];
+
+              for (const issue of issues.data) {
+                const events = await github.rest.issues.listEvents({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  per_page: 100
+                });
+
+                events.data.forEach(event => {
+                  allChanges.push({
+                    issue_number: issue.number,
+                    issue_title: issue.title,
+                    event_type: event.event,
+                    actor: event.actor?.login || 'Unknown',
+                    created_at: event.created_at,
+                    readable_date: new Date(event.created_at).toLocaleString('es-ES')
+                  });
+                });
+              }
+
+              allChanges.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+              // ===============================
+              // GENERAR REPORTE
+              // ===============================
+              const now = new Date();
+              const timestamp = now.toISOString();
+              const readableTime = now.toLocaleString('es-ES');
+
+              let report = '';
+              report += '╔════════════════════════════════════════════════════════════════════╗\n';
+              report += '║           HISTORIAL COMPLETO DEL PROYECTO                         ║\n';
+              report += '╚════════════════════════════════════════════════════════════════════╝\n\n';
+
+              report += `📅 Fecha: ${readableTime}\n`;
+              report += `🏢 Proyecto: ${project.title}\n`;
+              report += `📊 Items: ${projectItemsData.length}\n`;
+              report += `🔄 Cambios: ${allChanges.length}\n\n`;
+
+              // ===============================
+              // ESTADO ACTUAL (CON START DATE REAL)
+              // ===============================
+              report += '═'.repeat(70) + '\n';
+              report += '📋 ESTADO ACTUAL DEL PROJECT\n';
+              report += '═'.repeat(70) + '\n\n';
+
+              projectItemsData.forEach((item, i) => {
+                report += `${i + 1}. 📌 ISSUE #${item.number}\n`;
+                report += `   ├─ Título: ${item.title}\n`;
+                report += `   ├─ Estado GitHub: ${item.state}\n`;
+                report += `   ├─ 📌 Status: ${item.status}\n`;
+                report += `   └─ ⏰ Start date: ${item.startDate}\n\n`;
+              });
+
+              // ===============================
+              // HISTORIAL DE CAMBIOS
+              // ===============================
+              report += '═'.repeat(70) + '\n';
+              report += '🔄 HISTORIAL DE CAMBIOS\n';
+              report += '═'.repeat(70) + '\n\n';
+
+              allChanges.forEach((change, i) => {
+                report += `${i + 1}. 📌 Issue #${change.issue_number}\n`;
+                report += `   ├─ Evento: ${change.event_type}\n`;
+                report += `   ├─ Actor: ${change.actor}\n`;
+                report += `   └─ Fecha: ${change.readable_date}\n\n`;
+              });
+
+              // ===============================
+              // GUARDAR ARCHIVO
+              // ===============================
+              fs.writeFileSync('project-changes.txt', report);
+              console.log('💾 Reporte generado');
+
+            } catch (error) {
+              console.error('❌ Error:', error.message);
+              throw error;
+            }
+
+      - name: Commit and Push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -A
+          git commit -m "📊 Track project changes - $(date '+%Y-%m-%d %H:%M:%S')" || echo "No changes"
+          git push || echo "Nothing to push"
