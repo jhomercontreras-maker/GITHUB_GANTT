@@ -32,7 +32,6 @@ jobs:
             try {
               console.log(`🔍 Buscando Project #${projectNumber} (USER)...\n`);
 
-              // ✅ QUERY COMPLETA CON FIELD VALUES (START DATE + STATUS)
               const query = `
                 query {
                   user(login: "${owner}") {
@@ -95,6 +94,7 @@ jobs:
                 if (!item.content) continue;
 
                 let startDate = 'Sin fecha';
+                let targetDate = 'Sin fecha';
                 let status = 'Sin estado';
 
                 item.fieldValues.nodes.forEach(fieldValue => {
@@ -102,6 +102,10 @@ jobs:
 
                   if (fieldName === 'Start date') {
                     startDate = fieldValue.date || 'Sin fecha';
+                  }
+
+                  if (fieldName === 'Target date') {
+                    targetDate = fieldValue.date || 'Sin fecha';
                   }
 
                   if (fieldName === 'Status') {
@@ -114,6 +118,7 @@ jobs:
                   title: item.content.title,
                   state: item.content.state,
                   startDate,
+                  targetDate,
                   status
                 });
               }
@@ -170,7 +175,7 @@ jobs:
               report += `🔄 Cambios: ${allChanges.length}\n\n`;
 
               // ===============================
-              // ESTADO ACTUAL (CON START DATE REAL)
+              // ESTADO ACTUAL
               // ===============================
               report += '═'.repeat(70) + '\n';
               report += '📋 ESTADO ACTUAL DEL PROJECT\n';
@@ -181,7 +186,8 @@ jobs:
                 report += `   ├─ Título: ${item.title}\n`;
                 report += `   ├─ Estado GitHub: ${item.state}\n`;
                 report += `   ├─ 📌 Status: ${item.status}\n`;
-                report += `   └─ ⏰ Start date: ${item.startDate}\n\n`;
+                report += `   ├─ ⏰ Start date: ${item.startDate}\n`;
+                report += `   └─ 🎯 Target date: ${item.targetDate}\n\n`;
               });
 
               // ===============================
